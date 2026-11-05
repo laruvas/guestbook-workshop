@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Added
+- `created_at` у сообщений: время создания отдаётся в `GET /messages`.
+
+### Migration
+- Expand-миграция при старте: `ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()`.
+  Обратно совместима: v1.0.0 пишет и читает только `author, text`, колонку с DEFAULT не замечает.
+  Откат на 1.0.0 возможен без отката базы. Старым записям проставится время миграции.
+
 ## [1.0.0] - 2026-11-05
 
 Первый релиз, доведённый до прода.
