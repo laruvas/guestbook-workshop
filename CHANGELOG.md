@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-05
+
 ### Added
 - `created_at` у сообщений: время создания отдаётся в `GET /messages`.
 
@@ -32,5 +34,6 @@
 ### Removed
 - `requirements.txt` и зашитый в код пароль базы.
 
-[Unreleased]: https://github.com/laruvas/guestbook-workshop/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/laruvas/guestbook-workshop/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/laruvas/guestbook-workshop/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/laruvas/guestbook-workshop/releases/tag/v1.0.0
