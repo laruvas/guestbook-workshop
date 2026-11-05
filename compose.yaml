@@ -1,5 +1,8 @@
 services:
   app:
+    # Один файл на dev и прод: `up --build` собирает образ локально (тег :dev),
+    # scripts/deploy.sh задаёт APP_VERSION=X.Y.Z и тянет готовый образ из ghcr.io.
+    image: ${APP_IMAGE:-ghcr.io/laruvas/guestbook-workshop}:${APP_VERSION:-dev}
     build: .
     ports:
       - "${APP_PORT:-8000}:8000"

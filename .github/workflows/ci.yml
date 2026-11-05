@@ -1,0 +1,183 @@
+name: CI/CD
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*.*.*"]
+  pull_request:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # 1. Линтер и тесты — на каждый push и pull_request
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: guestbook
+          POSTGRES_DB: guestbook
+          # одноразовая база внутри раннера, не секрет
+          POSTGRES_PASSWORD: ci-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U guestbook -d guestbook"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PASSWORD: ci-only
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Ruff (lint)
+        run: uv run ruff check .
+      - name: Ruff (format)
+        run: uv run ruff format --check .
+      - name: Pytest
+        run: uv run pytest -v
+
+  # 2. Публикация образа в ghcr.io — только после зелёного check и только из main / тега релиза
+  publish:
+    needs: check
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Определить версию и проверить релиз
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            version=${GITHUB_REF_NAME#v}
+            # релиз только из main
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+              || { echo "::error::Тег $GITHUB_REF_NAME не на ветке main"; exit 1; }
+            # тег, pyproject.toml и CHANGELOG.md должны совпадать
+            grep -qx "version = \"$version\"" pyproject.toml \
+              || { echo "::error::В pyproject.toml не версия $version"; exit 1; }
+            grep -q "^## \[$version\]" CHANGELOG.md \
+              || { echo "::error::В CHANGELOG.md нет раздела [$version]"; exit 1; }
+          else
+            version="main-${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: APP_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # 3. Учения на каждый релиз: выкат нового тега поверх предыдущего и откат обратно,
+  #    данные в PostgreSQL должны пережить и то и другое
+  release-drill:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      APP_IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Подготовить .env со случайным паролем
+        run: |
+          cp .env.example .env
+          sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
+
+      - name: Найти предыдущий релиз
+        id: prev
+        run: |
+          prev=$(git tag -l 'v*.*.*' --sort=v:refname | awk -v cur="$GITHUB_REF_NAME" '$0==cur {print p} {p=$0}')
+          echo "new=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "prev=${prev#v}" >> "$GITHUB_OUTPUT"
+          echo "Новый релиз: $GITHUB_REF_NAME, предыдущий: ${prev:-нет}"
+
+      - name: Прод на предыдущем релизе + данные
+        if: steps.prev.outputs.prev != ''
+        run: |
+          scripts/deploy.sh "${{ steps.prev.outputs.prev }}"
+          curl -fsS -X POST localhost:8000/messages -H 'Content-Type: application/json' \
+            -d '{"author":"drill","text":"запись до выката"}'
+
+      - name: Выкат нового релиза
+        run: |
+          scripts/deploy.sh "${{ steps.prev.outputs.new }}"
+          curl -fsS -X POST localhost:8000/messages -H 'Content-Type: application/json' \
+            -d '{"author":"drill","text":"запись на новой версии"}'
+          curl -fsS localhost:8000/messages | tee /tmp/after-deploy.json
+          if [[ -n "${{ steps.prev.outputs.prev }}" ]]; then grep -q "запись до выката" /tmp/after-deploy.json; fi
+
+      - name: Откат на предыдущий релиз
+        if: steps.prev.outputs.prev != ''
+        run: |
+          scripts/deploy.sh rollback
+          test "$(curl -fsS localhost:8000/version)" = '{"version":"${{ steps.prev.outputs.prev }}"}'
+          curl -fsS localhost:8000/messages | tee /tmp/after-rollback.json
+          # старая версия видит и старые, и новые записи, и может писать дальше
+          grep -q "запись до выката" /tmp/after-rollback.json
+          grep -q "запись на новой версии" /tmp/after-rollback.json
+          curl -fsS -X POST localhost:8000/messages -H 'Content-Type: application/json' \
+            -d '{"author":"drill","text":"запись после отката"}'
+
+      - name: Итог
+        if: always()
+        run: |
+          scripts/deploy.sh status || true
+          {
+            echo "### Учения релиза $GITHUB_REF_NAME"
+            echo
+            echo "| Шаг | Версия |"
+            echo "|---|---|"
+            echo "| До выката | ${{ steps.prev.outputs.prev || '—' }} |"
+            echo "| Выкат | ${{ steps.prev.outputs.new }} |"
+            echo "| Работает сейчас | $(curl -fsS localhost:8000/version 2>/dev/null || echo 'сервис не отвечает') |"
+            echo
+            echo '```json'
+            curl -fsS localhost:8000/messages 2>/dev/null || true
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          docker compose logs --no-color app | tail -n 50

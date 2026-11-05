@@ -1,74 +1,142 @@
-# 📒 guestbook — стартовый репозиторий воркшопа
+# 📒 Guestbook
 
-Небольшая **гостевая книга** на FastAPI: можно оставить сообщение и посмотреть все оставленные. Данные хранятся в PostgreSQL.
+[![CI/CD](https://github.com/laruvas/guestbook-workshop/actions/workflows/ci.yml/badge.svg)](https://github.com/laruvas/guestbook-workshop/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/tag/laruvas/guestbook-workshop?label=release&sort=semver)](CHANGELOG.md)
 
-## Что умеет
+Гостевая книга на FastAPI + PostgreSQL. Само приложение маленькое, главное в репозитории — путь
+кода до прода: зафиксированные зависимости, контейнер, CI/CD, релизы по тегам, проверенный откат
+и инструкции на случай аварии.
 
-- `GET /` — приветствие
-- `GET /health` — проверка «жив ли сервис»
-- `GET /messages` — список сообщений (новые сверху)
-- `POST /messages` — добавить сообщение: тело `{"author": "...", "text": "..."}`
+- 🚨 Что-то сломалось → [RUNBOOK.md](RUNBOOK.md)
+- 📦 Что изменилось в релизах → [CHANGELOG.md](CHANGELOG.md)
+- 🐳 Образы → [ghcr.io/laruvas/guestbook-workshop](https://github.com/laruvas/guestbook-workshop/pkgs/container/guestbook-workshop)
 
-## Текущее состояние: «работает у меня»
+## API
 
-Честно предупреждаем: сейчас проект заводится только у автора и только если звёзды сошлись. А именно:
+| Метод | Путь | Что делает |
+|---|---|---|
+| `GET` | `/` | приветствие |
+| `GET` | `/health` | сервис жив |
+| `GET` | `/version` | какой релиз запущен |
+| `GET` | `/messages` | сообщения, новые сверху |
+| `POST` | `/messages` | добавить сообщение: `{"author": "...", "text": "..."}` |
 
-- зависимости лежат в `requirements.txt` и никак не зафиксированы;
-- адрес базы и **пароль зашиты прямо в `main.py`**;
-- нет ни `Dockerfile`, ни `compose.yaml` — базу нужно поднимать и настраивать руками;
-- нет `.gitignore`, нет `.env`.
+## Быстрый старт
 
-Вот как автор запускает это у себя (и почему так оставлять нельзя):
-
-```bash
-pip install -r requirements.txt
-# ... где-то локально поднят PostgreSQL с базой guestbook и тем самым паролем из кода ...
-uvicorn main:app
-```
-
-## 🎯 Ваша задача
-
-**Нужно получить** тот же проект, доведённый до прода:
-
-- зависимости зафиксированы через **uv** (`pyproject.toml` + `uv.lock`), версия Python закреплена;
-- есть **Dockerfile** и **.dockerignore**, образ собирается;
-- есть **compose.yaml**, поднимающий приложение **и** PostgreSQL одной командой, с правильным порядком запуска и хранением данных;
-- настройки собраны в один конфиг на **pydantic-settings**, в коде нет `os.environ` вразнобой;
-- **секретов нет ни в коде, ни в коммите**: они живут в `.env` (в `.gitignore`), а в репозитории лежит `.env.example`.
-
-**Бизнес-логику менять не нужно** (эндпоинты и SQL уже работают) — вы работаете с упаковкой, конфигурацией и запуском.
-
-## 🚀 Как начать
-
-1. Форкните репозиторий воркшопа к себе (кнопка **Fork**).
-2. Склонируйте форк и заведите рабочую ветку:
+Нужны Docker с Compose v2.
 
 ```bash
-git clone https://github.com/ВАШ-ЛОГИН/guestbook-workshop.git
-cd guestbook-workshop
-git switch -c to-prod
+cp .env.example .env          # задайте свой POSTGRES_PASSWORD
+docker compose up -d --build  # приложение + PostgreSQL одной командой
+curl localhost:8000/health
 ```
 
-3. Выполнить задание, сверяясь с критериями.
+Swagger — http://localhost:8000/docs. Наружу проброшен только порт приложения,
+база доступна контейнеру `app` по имени сервиса `db`. Данные хранятся в volume `pgdata`
+и переживают `docker compose down` / `up` (их удаляет только `down -v`).
 
-## ✅ Критерии готовности
+## Конфигурация
 
-- [ ] Зависимости на **uv**: есть `pyproject.toml` и `uv.lock`, `requirements.txt` удалён, версия Python закреплена (`.python-version`)
-- [ ] Есть **`.gitignore`** с `.venv`, `.env`, `__pycache__`
-- [ ] Настройки собраны в **`config.py`** (pydantic-settings); в `main.py` нет зашитых адреса и пароля
-- [ ] Секретов нет ни в коде, ни в коммите: `.env` в `.gitignore`, в репозитории есть **`.env.example`**, в `compose.yaml` пароль через **`${...}`**
-- [ ] Есть **`Dockerfile`** (зависимости ставятся до кода, `--host 0.0.0.0`) и **`.dockerignore`** (без `.env`, `.git`, `.venv`)
-- [ ] **`compose.yaml`** поднимает `app` + `db`; наружу проброшен только `app`; есть `depends_on: service_healthy`, `healthcheck` и `volume`
-- [ ] **Приёмочный тест пройден:** сообщение добавляется, отображается и переживает `down`/`up`
-- [ ] Секретов нет ни в коде, ни в коммитах; работа влита в `main` через merge
+Все настройки собраны в [`config.py`](config.py) (pydantic-settings) и читаются из
+переменных окружения или `.env`. В коде больше нигде нет `os.environ`, секретов в репозитории нет.
 
-## 🏁 Как завершить
+| Переменная | По умолчанию | Назначение |
+|---|---|---|
+| `POSTGRES_PASSWORD` | — (обязательна) | пароль базы, только в `.env` |
+| `POSTGRES_USER` / `POSTGRES_DB` | `guestbook` | пользователь и база |
+| `POSTGRES_HOST` / `POSTGRES_PORT` | `localhost` / `5432` | в compose хост переопределён на `db` |
+| `APP_PORT` | `8000` | порт на хосте |
+| `APP_VERSION` | `dev` | какой образ из ghcr.io запускать; в образ вшивается при сборке |
+
+## Разработка
 
 ```bash
-git add .
-git commit -m "chore: гостевая книга доведена до прода (uv, Docker, Compose, конфиг)"
-git switch main
-git merge to-prod
-git push -u origin main
+uv sync                      # Python 3.13 и зависимости ровно по uv.lock
+uv run ruff check . && uv run ruff format --check .
+uv run pytest                # нужен PostgreSQL, см. ниже
+uv run uvicorn main:app --reload
 ```
 
+Тесты ходят в настоящую базу. Самый простой способ получить её локально:
+
+```bash
+docker run --rm -d --name pg-test -p 5432:5432 \
+  -e POSTGRES_USER=guestbook -e POSTGRES_DB=guestbook -e POSTGRES_PASSWORD=test postgres:16-alpine
+POSTGRES_PASSWORD=test uv run pytest
+```
+
+## CI/CD
+
+Один workflow, [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+
+```
+push / pull_request ──► check: ruff + pytest (на PostgreSQL)
+                          │ зелёный, push в main или тег vX.Y.Z
+                          ▼
+                        publish: образ в ghcr.io
+                          │ main  → :latest, :sha-xxxxxxx
+                          │ тег   → :X.Y.Z, :X.Y
+                          ▼ только для тега
+                        release-drill: выкат нового релиза поверх предыдущего
+                                       и откат обратно, данные должны выжить
+```
+
+На тег `publish` дополнительно проверяет, что коммит есть в `main`, а версия совпадает
+с `pyproject.toml` и разделом в `CHANGELOG.md`.
+
+## Как выпустить релиз
+
+1. Внести изменения в `main` (через ветку и merge), дождаться зелёного CI.
+2. Поднять версию в `pyproject.toml`, перенести пункты из `[Unreleased]` в новый раздел `CHANGELOG.md`.
+3. Закоммитить, поставить тег и запушить:
+
+   ```bash
+   git commit -am "release: v1.2.0"
+   git tag -a v1.2.0 -m "v1.2.0"
+   git push origin main v1.2.0
+   ```
+
+4. В Actions пройдут `check` → `publish` → `release-drill`, в Packages появится `:1.2.0`.
+
+Номер версии — по SemVer: исправление → patch, новая обратно совместимая возможность → minor,
+несовместимое изменение API → major.
+
+## Выкат и откат
+
+На сервере лежит этот репозиторий (нужны `compose.yaml`, `scripts/` и `.env`):
+
+```bash
+scripts/deploy.sh 1.1.0     # выкатить релиз: pull образа, перезапуск, ждём healthcheck, сверяем /version
+scripts/deploy.sh rollback  # вернуться на предыдущий выкаченный релиз
+scripts/deploy.sh status    # что запущено и история выкатов
+```
+
+Если `/version` после выката не совпадает с ожидаемой версией, скрипт завершится с ошибкой.
+Подробные сценарии разобраны в [RUNBOOK.md](RUNBOOK.md).
+
+## Инженерные решения
+
+**Стратегия выката — recreate по неизменяемому тегу.** Сервис работает в одном экземпляре
+на одном хосте под Compose. Blue-green или canary потребовали бы балансировщик и второй экземпляр,
+а для гостевой книги несколько секунд простоя на рестарте допустимы. Взамен откат устроен просто
+и всегда одинаково: каждый релиз — неизменяемый образ `:X.Y.Z`, откат — это выкат предыдущего тега
+той же командой. Откат репетируется в CI на каждом релизе (`release-drill`), поэтому он проверен
+до того, как понадобится в аварии.
+
+**Схема БД меняется только обратно совместимо (expand → contract).** Миграции выполняет
+приложение при старте и только *расширяют* схему: новые колонки добавляются с `DEFAULT`, ничего
+не удаляется и не переименовывается в том же релизе. Поэтому предыдущая версия продолжает
+работать на новой схеме, и откат кода не требует отката базы.
+Удаление старого (contract) делается отдельным релизом, когда к прошлой версии точно не вернёмся.
+
+## Структура
+
+```
+main.py              эндпоинты и миграция схемы при старте
+config.py            все настройки (pydantic-settings)
+tests/               pytest на настоящем PostgreSQL
+Dockerfile           образ: uv sync --locked, затем код, запуск не от root
+compose.yaml         app + db, healthcheck, volume
+scripts/deploy.sh    выкат / откат / статус
+.github/workflows/   CI/CD
+```
