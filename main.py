@@ -17,6 +17,13 @@ async def lifespan(app: FastAPI):
         conn.execute(
             "CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, author TEXT, text TEXT)"
         )
+        # v1.1.0 — expand-миграция: только добавляем колонку с DEFAULT.
+        # v1.0.0 вставляет (author, text) и читает (author, text) — новую колонку она не видит,
+        # поэтому откат кода на v1.0.0 не требует отката базы.
+        conn.execute(
+            "ALTER TABLE messages "
+            "ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()"
+        )
     yield
 
 
@@ -46,8 +53,13 @@ def version():
 @app.get("/messages")
 def list_messages():
     with connect() as conn:
-        rows = conn.execute("SELECT author, text FROM messages ORDER BY id DESC").fetchall()
-    return [{"author": author, "text": text} for author, text in rows]
+        rows = conn.execute(
+            "SELECT author, text, created_at FROM messages ORDER BY id DESC"
+        ).fetchall()
+    return [
+        {"author": author, "text": text, "created_at": created_at.isoformat()}
+        for author, text, created_at in rows
+    ]
 
 
 @app.post("/messages")
