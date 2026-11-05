@@ -11,3 +11,4 @@ dist/
 .idea/
 .vscode/
 run.sh
+.deploy-history

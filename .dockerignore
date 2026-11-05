@@ -1,5 +1,7 @@
 .git
+.github
 .gitignore
+.gitattributes
 .env
 .env.*
 !.env.example
@@ -8,7 +10,10 @@ __pycache__
 *.pyc
 .pytest_cache
 .ruff_cache
+tests
+scripts
+.deploy-history
 Dockerfile
 .dockerignore
 compose.yaml
-README.md
+*.md

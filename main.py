@@ -15,8 +15,7 @@ def connect():
 async def lifespan(app: FastAPI):
     with connect() as conn:
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS messages ("
-            "id SERIAL PRIMARY KEY, author TEXT, text TEXT)"
+            "CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, author TEXT, text TEXT)"
         )
     yield
 
@@ -39,12 +38,15 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/version")
+def version():
+    return {"version": settings.app_version}
+
+
 @app.get("/messages")
 def list_messages():
     with connect() as conn:
-        rows = conn.execute(
-            "SELECT author, text FROM messages ORDER BY id DESC"
-        ).fetchall()
+        rows = conn.execute("SELECT author, text FROM messages ORDER BY id DESC").fetchall()
     return [{"author": author, "text": text} for author, text in rows]
 
 
